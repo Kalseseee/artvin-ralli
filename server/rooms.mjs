@@ -3,7 +3,8 @@ import {CARS} from '../dist/catalog.js';
 import {cleanName,cleanCustom} from '../dist/customization.js';
 import {newVehicle,stepVehicle,roadCenter,roadHeading,obstacleContact} from '../dist/physics.js';
 import {initialHazards,createHazardSchedule,timedHazard} from '../dist/hazards.js';
-export const TRACKS=[{length:1600,grip:.78,name:'Borçka'},{length:1800,grip:.56,name:'Şavşat'},{length:2000,grip:1,name:'Hatila'}];
+import {TRACK_RULES,HAZARD_DENSITIES,cleanDensity} from '../dist/race-settings.js';
+export const TRACKS=TRACK_RULES;
 const blank=()=>({throttle:false,brake:false,handbrake:false,steer:0});
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
 const hash=v=>createHash('sha256').update(v).digest();
@@ -11,7 +12,7 @@ export function safeProfile(p={}){const car=CARS.findIndex(c=>c.id===p.carId);re
 export class Rooms{
  constructor({now=Date.now,rng=Math.random}={}){this.now=now;this.rng=rng;this.rooms=new Map();}
  get(code){const r=this.rooms.get(String(code).toUpperCase());if(!r)throw Error('Oda bulunamadı. Kodu kontrol et veya yeni oda aç.');return r;}
- create(profile,track=0){if(this.rooms.size>=80)throw Error('Sunucu dolu. Biraz sonra tekrar dene.');let code;do{code=randomBytes(6).toString('base64url').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);}while(code.length!==6||this.rooms.has(code));const r={code,track:Number.isInteger(track)&&TRACKS[track]?track:0,host:null,players:[],phase:'lobby',raceId:null,startAt:null,simAt:null,elapsed:0,createdAt:this.now(),updatedAt:this.now(),hazards:[],eventId:0,nextSlot:0};this.rooms.set(code,r);return this.join(code,profile);}
+ create(profile,track=0,hazardDensity='normal'){if(this.rooms.size>=80)throw Error('Sunucu dolu. Biraz sonra tekrar dene.');let code;do{code=randomBytes(6).toString('base64url').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);}while(code.length!==6||this.rooms.has(code));const r={code,track:Number.isInteger(track)&&TRACKS[track]?track:0,hazardDensity:cleanDensity(hazardDensity),host:null,players:[],phase:'lobby',raceId:null,startAt:null,simAt:null,elapsed:0,createdAt:this.now(),updatedAt:this.now(),hazards:[],eventId:0,nextSlot:0};this.rooms.set(code,r);return this.join(code,profile);}
  join(code,profile){const r=this.get(code);if(r.phase!=='lobby')throw Error('Yarış başlamış. Oda sahibinden yeni yarış açmasını iste.');if(r.players.length>=4)throw Error('Bu oda dolu; en fazla 4 kişi katılabilir.');const token=randomBytes(24).toString('hex'),p={id:randomBytes(12).toString('hex'),tokenHash:hash(token),profile:safeProfile(profile),slot:r.nextSlot++,connected:true,disconnectedAt:null,ready:false,input:blank(),seq:0,lastInputAt:0,v:null,finishTime:null,dnf:false,hits:new Map(),lastEvent:null,crashes:0,topSpeed:0};r.players.push(p);r.host??=p.id;r.updatedAt=this.now();return {room:r,player:p,token};}
  resume(code,id,token){const r=this.get(code),p=r.players.find(p=>p.id===id);if(!p||typeof token!=='string'||token.length!==48||!timingSafeEqual(p.tokenHash,hash(token)))throw Error('Odaya dönüş bilgisi geçersiz. Davet bağlantısıyla yeniden katıl.');p.connected=true;p.disconnectedAt=null;r.updatedAt=this.now();return {room:r,player:p};}
  disconnect(r,p){p.connected=false;p.disconnectedAt=this.now();p.input={...blank(),brake:true};if(r.phase==='lobby'){p.ready=false;this.transferHost(r);}r.updatedAt=this.now();}
@@ -19,8 +20,22 @@ export class Rooms{
  transferHost(r){if(!r.players.some(p=>p.id===r.host&&p.connected))r.host=r.players.find(p=>p.connected)?.id||null;}
  ready(r,p,value){if(r.phase!=='lobby')throw Error('Hazır durumu yalnızca bekleme odasında değişir.');p.ready=!!value;}
  canStart(r){return r.phase==='lobby'&&r.players.length>=2&&r.players.every(p=>p.connected&&p.ready);}
- start(r,p){if(p.id!==r.host)throw Error('Yarışı yalnızca oda sahibi başlatabilir.');if(!this.canStart(r))throw Error('En az 2 oyuncu katılmalı ve herkes hazır olmalı.');r.phase='countdown';r.raceId=randomBytes(12).toString('hex');r.startAt=this.now()+3500;r.simAt=r.startAt;r.elapsed=0;r.eventId=0;r.hazards=initialHazards(TRACKS[r.track].length,this.rng).map((o,i)=>({...o,id:i+1,radius:o.kind==='water'?1.55:.55}));r.schedule=createHazardSchedule(this.rng);r.players.forEach((x,i)=>{x.v=newVehicle(r.track);x.v.s=Math.floor(i/2)*-3;x.v.lateral=i%2===0?-1.55:1.55;x.v.x=roadCenter(x.v.s,r.track)+x.v.lateral;x.v.heading=x.v.travelHeading=roadHeading(x.v.s,r.track);x.input=blank();x.seq=0;x.lastInputAt=this.now();x.finishTime=null;x.dnf=false;x.hits=new Map();x.lastEvent=null;x.crashes=0;x.topSpeed=0;});}
+ start(r,p){if(p.id!==r.host)throw Error('Yarışı yalnızca oda sahibi başlatabilir.');if(!this.canStart(r))throw Error('En az 2 oyuncu katılmalı ve herkes hazır olmalı.');r.phase='countdown';r.raceId=randomBytes(12).toString('hex');r.startAt=this.now()+3500;r.simAt=r.startAt;r.elapsed=0;r.eventId=0;r.hazards=initialHazards(TRACKS[r.track].length,this.rng,HAZARD_DENSITIES[r.hazardDensity]).map((o,i)=>({...o,id:i+1,radius:o.kind==='water'?1.55:.55}));r.schedule=createHazardSchedule(this.rng,HAZARD_DENSITIES[r.hazardDensity]);r.players.forEach((x,i)=>{x.v=newVehicle(r.track);x.v.s=Math.floor(i/2)*-3;x.v.lateral=i%2===0?-1.55:1.55;x.v.x=roadCenter(x.v.s,r.track)+x.v.lateral;x.v.heading=x.v.travelHeading=roadHeading(x.v.s,r.track);x.input=blank();x.seq=0;x.lastInputAt=this.now();x.finishTime=null;x.dnf=false;x.hits=new Map();x.lastEvent=null;x.crashes=0;x.topSpeed=0;});}
  rematch(r,p){if(p.id!==r.host)throw Error('Yeni yarışı oda sahibi açabilir.');if(!['finished','lobby'].includes(r.phase))throw Error('Önce mevcut yarışın bitmesini bekle.');r.players=r.players.filter(p=>p.connected);r.phase='lobby';r.raceId=null;r.startAt=null;r.elapsed=0;r.players.forEach(x=>{x.ready=false;x.finishTime=null;x.dnf=false;x.v=null;});this.transferHost(r);}
+ configure(r,p,settings={}){
+  if(p.id!==r.host)throw Error('Oda ayarlarını yalnızca oda sahibi değiştirebilir.');
+  if(!['lobby','finished'].includes(r.phase))throw Error('Haritayı değiştirmek için yarışın bitmesini bekle.');
+  if(!Number.isInteger(settings.track)||!TRACKS[settings.track])throw Error('Geçersiz parkur.');
+  if(!Object.hasOwn(HAZARD_DENSITIES,settings.hazardDensity))throw Error('Geçersiz engel sıklığı.');
+  if(r.phase==='finished')this.rematch(r,p);
+  if(r.track===settings.track&&r.hazardDensity===settings.hazardDensity)return;
+  r.track=settings.track;r.hazardDensity=settings.hazardDensity;
+  r.players.forEach(x=>x.ready=false);r.updatedAt=this.now();
+ }
+ updateProfile(r,p,profile){
+  if(r.phase!=='lobby')throw Error('Aracını değiştirmek için bekleme odasına dön.');
+  p.profile=safeProfile(profile);p.ready=false;r.updatedAt=this.now();
+ }
  input(r,p,m){if(!['countdown','racing'].includes(r.phase)||p.dnf||p.finishTime!==null)return;if(!Number.isSafeInteger(m.seq)||m.seq<=p.seq||m.seq>1e10)return;p.seq=m.seq;p.lastInputAt=this.now();p.input={throttle:m.throttle===true,brake:m.brake===true,handbrake:m.handbrake===true,steer:typeof m.steer==='number'&&Number.isFinite(m.steer)?clamp(m.steer,-1,1):0};}
  event(r,p,kind,strength){p.lastEvent={id:++r.eventId,kind,strength};}
  tick(r,now=this.now()){
@@ -42,6 +57,6 @@ export class Rooms{
    if(r.players.every(p=>p.dnf||p.finishTime!==null)){r.phase='finished';this.transferHost(r);break;}
   }
  }
- snapshot(r){const ordered=[...r.players].sort((a,b)=>a.finishTime!==null&&b.finishTime!==null?a.finishTime-b.finishTime||a.slot-b.slot:a.finishTime!==null?-1:b.finishTime!==null?1:(b.v?.s||0)-(a.v?.s||0)||a.slot-b.slot);return {code:r.code,host:r.host,track:r.track,phase:r.phase,raceId:r.raceId,startAt:r.startAt,elapsed:r.elapsed,serverNow:this.now(),canStart:this.canStart(r),capacity:4,hazards:r.hazards,players:r.players.map(p=>({id:p.id,profile:p.profile,connected:p.connected,ready:p.ready,seq:p.seq,v:p.v?{...p.v}:null,finishTime:p.finishTime,dnf:p.dnf,rank:ordered.indexOf(p)+1,event:p.lastEvent,crashes:p.crashes,topSpeed:p.topSpeed}))};}
+ snapshot(r){const ordered=[...r.players].sort((a,b)=>a.finishTime!==null&&b.finishTime!==null?a.finishTime-b.finishTime||a.slot-b.slot:a.finishTime!==null?-1:b.finishTime!==null?1:(b.v?.s||0)-(a.v?.s||0)||a.slot-b.slot);return {code:r.code,host:r.host,track:r.track,hazardDensity:r.hazardDensity,phase:r.phase,raceId:r.raceId,startAt:r.startAt,elapsed:r.elapsed,serverNow:this.now(),canStart:this.canStart(r),capacity:4,hazards:r.hazards,players:r.players.map(p=>({id:p.id,profile:p.profile,connected:p.connected,ready:p.ready,seq:p.seq,v:p.v?{...p.v}:null,finishTime:p.finishTime,dnf:p.dnf,rank:ordered.indexOf(p)+1,event:p.lastEvent,crashes:p.crashes,topSpeed:p.topSpeed}))};}
  cleanup(){const now=this.now();for(const [code,r]of this.rooms){if((!r.players.some(p=>p.connected)&&now-r.updatedAt>600000)||now-r.createdAt>7200000)this.rooms.delete(code);}}
 }

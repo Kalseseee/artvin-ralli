@@ -1,12 +1,12 @@
 const between=(rng,a,b)=>a+(b-a)*rng();
-export function initialHazards(length,rng=Math.random){
- const result=[];let s=between(rng,105,165);
- while(s<length-85){result.push({s,off:between(rng,-2.9,2.9),kind:rng()<.43?'water':'rock',seed:rng()*100});s+=between(rng,120,205);}
+export function initialHazards(length,rng=Math.random,density=1){
+ if(density<=0)return [];const result=[];let s=between(rng,105,165);
+ while(s<length-85){result.push({s,off:between(rng,-2.9,2.9),kind:rng()<.43?'water':'rock',seed:rng()*100});s+=between(rng,120,205)/density;}
  return result;
 }
-export function createHazardSchedule(rng=Math.random){return {nextAt:between(rng,3.5,6.5)};}
+export function createHazardSchedule(rng=Math.random,density=1){return {density,nextAt:density>0?between(rng,3.5,6.5)/density:Infinity};}
 export function timedHazard(schedule,{time,s,speed,length,traffic=[],existing=[]},rng=Math.random){
- if(time<schedule.nextAt)return null;schedule.nextAt=time+between(rng,4.5,8.5);
+ if(time<schedule.nextAt)return null;schedule.nextAt=time+between(rng,4.5,8.5)/(schedule.density??1);
  let at=s+Math.max(105,speed*2.7+45)+between(rng,10,60);
  // Only appear well ahead, never beneath any racer or on top of another obstacle.
  for(let tries=0;tries<12;tries++){
