@@ -1,0 +1,2 @@
+export function resultRows(player,rivals){return [player,...rivals].map((r,i)=>({...r,order:i})).sort((a,b)=>a.time!==null&&b.time!==null?a.time-b.time:a.time!==null?-1:b.time!==null?1:b.s-a.s||a.order-b.order).map((r,i,all)=>({...r,rank:i+1,gap:r.time!==null&&all[0].time!==null?r.time-all[0].time:null}));}
+export function secondsText(t){return Number.isFinite(t)?t.toFixed(2).replace('.',',')+' sn':'Yarışıyor…';}
